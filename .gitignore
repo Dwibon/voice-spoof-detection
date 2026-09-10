@@ -1,0 +1,19 @@
+# Datasets
+data/indiefake/
+data/in_the_wild/
+data/asvspoof2019/
+
+# Cached features / embeddings
+data/cached_embeddings/
+data/cached_prosody/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Temporary files
+*.tmp
