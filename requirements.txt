@@ -4,7 +4,7 @@ torchaudio==2.11.0
 transformers
 numpy
 scikit-learn
-librosa==1.0.0
+librosa
 soundfile
 speechbrain==1.1.1
 

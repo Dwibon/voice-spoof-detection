@@ -14,7 +14,15 @@ Real-Time AI Voice Cloning / Impersonation Detection.
 - O11: Risk-tier recommendations.
 - Remaining integration: O6 web UI and O7 FastAPI/OpenAPI/SDK/mock webhook.
 
-## Main detector
+## Running the Application
+
+Start the FastAPI server which also serves the Web UI on port 8000:
+```bash
+uvicorn src.api:app --reload
+```
+Then open `http://localhost:8000/` in your browser.
+
+## Main detector (CLI)
 ```bash
 python3 src/realtime_detect.py <audio_file>
 python3 src/realtime_detect.py <audio_file> <reference_audio>
