@@ -49,7 +49,7 @@ PROJECT_ROOT = os.path.dirname(
 MODEL_PATH = os.path.join(
     PROJECT_ROOT,
     "models",
-    "classifier_head_best.pt"
+    "classifier_head_indian_adapted.pt"
 )
 
 
