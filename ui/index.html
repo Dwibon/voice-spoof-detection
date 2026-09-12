@@ -257,6 +257,40 @@
                         </button>
                     </form>
 
+                    <!-- Live Detection -->
+                    <div class="mt-5 pt-5 border-t border-black/[0.04]">
+                        <div class="flex items-center justify-between mb-3">
+                            <div>
+                                <h3 class="text-[13px] font-semibold">Live Detection</h3>
+                                <p class="text-[10px] text-[#1a1a1a]/30 mt-0.5 font-mono">
+                                    Browser microphone · 4s rolling windows
+                                </p>
+                            </div>
+                            <span id="liveStatus" class="text-[10px] font-mono text-[#1a1a1a]/30 uppercase tracking-wider">
+                                OFFLINE
+                            </span>
+                        </div>
+
+                        <button type="button" id="liveBtn"
+                            class="w-full h-[42px] rounded-xl border border-black/[0.08] bg-white/60 text-[13px] font-medium flex items-center justify-center gap-2 hover:bg-white transition">
+                            <span id="liveDot" class="w-2 h-2 rounded-full bg-[#1a1a1a]/20"></span>
+                            <span id="liveBtnText">Start Live Detection</span>
+                        </button>
+
+                        <div id="liveMeter" class="hidden mt-4">
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-[10px] text-[#1a1a1a]/35 uppercase tracking-wider">Live Spoof Risk</span>
+                                <span id="liveRisk" class="text-[12px] font-mono font-semibold">--</span>
+                            </div>
+                            <div class="h-1.5 rounded-full bg-black/[0.05] overflow-hidden">
+                                <div id="liveBar" class="h-full rounded-full transition-all duration-500" style="width:0%"></div>
+                            </div>
+                            <p id="liveDetail" class="text-[10px] text-[#1a1a1a]/30 mt-2 font-mono">
+                                Waiting for 4 seconds of speech...
+                            </p>
+                        </div>
+                    </div>
+
                     <!-- Privacy Footer -->
                     <div class="mt-5 pt-4 border-t border-black/[0.04] flex items-center gap-2">
                         <svg class="w-3.5 h-3.5 text-emerald-600/60 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -554,6 +588,241 @@
             document.getElementById('actionText').style.color = riskTextColor;
             document.getElementById('recommendationMessage').textContent = res.recommendation.message;
         }
+        // ============================================
+        // LIVE MICROPHONE DETECTION
+        // ============================================
+
+        let liveSocket = null;
+        let liveStream = null;
+        let liveAudioContext = null;
+        let liveProcessor = null;
+        let liveSource = null;
+
+        const liveBtn = document.getElementById('liveBtn');
+        const liveBtnText = document.getElementById('liveBtnText');
+        const liveStatus = document.getElementById('liveStatus');
+        const liveDot = document.getElementById('liveDot');
+        const liveMeter = document.getElementById('liveMeter');
+        const liveRisk = document.getElementById('liveRisk');
+        const liveBar = document.getElementById('liveBar');
+        const liveDetail = document.getElementById('liveDetail');
+
+        function downsampleBuffer(buffer, inputSampleRate, outputSampleRate) {
+            if (inputSampleRate === outputSampleRate) {
+                return buffer;
+            }
+
+            const ratio = inputSampleRate / outputSampleRate;
+            const newLength = Math.round(buffer.length / ratio);
+            const result = new Float32Array(newLength);
+
+            let offsetResult = 0;
+            let offsetBuffer = 0;
+
+            while (offsetResult < result.length) {
+                const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+                let accum = 0;
+                let count = 0;
+
+                for (
+                    let i = offsetBuffer;
+                    i < nextOffsetBuffer && i < buffer.length;
+                    i++
+                ) {
+                    accum += buffer[i];
+                    count++;
+                }
+
+                result[offsetResult] = count ? accum / count : 0;
+                offsetResult++;
+                offsetBuffer = nextOffsetBuffer;
+            }
+
+            return result;
+        }
+
+        function floatTo16BitPCM(float32Array) {
+            const output = new Int16Array(float32Array.length);
+
+            for (let i = 0; i < float32Array.length; i++) {
+                const sample = Math.max(-1, Math.min(1, float32Array[i]));
+                output[i] = sample < 0
+                    ? sample * 0x8000
+                    : sample * 0x7FFF;
+            }
+
+            return output;
+        }
+
+        function pcmToArrayBuffer(int16Array) {
+            return int16Array.buffer;
+        }
+
+        function updateLiveResult(data) {
+            if (data.error) {
+                liveDetail.textContent = data.error;
+                return;
+            }
+
+            const percentage = Number(data.spoof_percentage || 0);
+            const level = data.risk_level || 'LOW';
+
+            liveRisk.textContent = `${percentage.toFixed(1)}% · ${level}`;
+            liveBar.style.width = `${Math.min(100, Math.max(0, percentage))}%`;
+
+            if (level === 'HIGH') {
+                liveRisk.style.color = '#dc2626';
+                liveBar.style.background = '#dc2626';
+            } else if (level === 'MEDIUM') {
+                liveRisk.style.color = '#d97706';
+                liveBar.style.background = '#d97706';
+            } else {
+                liveRisk.style.color = '#059669';
+                liveBar.style.background = '#059669';
+            }
+
+            liveDetail.textContent =
+                `${data.windows_analyzed || 1} rolling window(s) · ` +
+                `Decision confidence ${Number(data.confidence || 0).toFixed(1)}%`;
+        }
+
+        async function startLiveDetection() {
+            try {
+                liveBtn.disabled = true;
+                liveBtnText.textContent = 'Requesting microphone…';
+
+                liveStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        channelCount: 1,
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false
+                    }
+                });
+
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws/live-detect`;
+
+                liveSocket = new WebSocket(wsUrl);
+                liveSocket.binaryType = 'arraybuffer';
+
+                liveSocket.onopen = async () => {
+                    liveAudioContext = new AudioContext();
+                    await liveAudioContext.resume();
+
+                    liveSource = liveAudioContext.createMediaStreamSource(liveStream);
+
+                    // ScriptProcessor is intentionally used here for the
+                    // hackathon demo so the complete live pipeline stays
+                    // inside this single HTML file.
+                    liveProcessor = liveAudioContext.createScriptProcessor(
+                        4096,
+                        1,
+                        1
+                    );
+
+                    liveProcessor.onaudioprocess = (event) => {
+                        if (!liveSocket || liveSocket.readyState !== WebSocket.OPEN) {
+                            return;
+                        }
+
+                        const input = event.inputBuffer.getChannelData(0);
+
+                        const downsampled = downsampleBuffer(
+                            input,
+                            liveAudioContext.sampleRate,
+                            16000
+                        );
+
+                        const pcm16 = floatTo16BitPCM(downsampled);
+                        liveSocket.send(pcmToArrayBuffer(pcm16));
+                    };
+
+                    liveSource.connect(liveProcessor);
+                    liveProcessor.connect(liveAudioContext.destination);
+
+                    liveBtn.disabled = false;
+                    liveBtnText.textContent = 'Stop Live Detection';
+                    liveStatus.textContent = 'LIVE';
+                    liveStatus.style.color = '#dc2626';
+                    liveDot.style.background = '#dc2626';
+                    liveDot.classList.add('animate-pulse');
+                    liveMeter.classList.remove('hidden');
+                    liveDetail.textContent =
+                        'Listening… waiting for 4 seconds of audio.';
+                };
+
+                liveSocket.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    updateLiveResult(data);
+                };
+
+                liveSocket.onerror = () => {
+                    liveDetail.textContent =
+                        'Live connection error. Please try again.';
+                };
+
+                liveSocket.onclose = () => {
+                    stopLiveDetection();
+                };
+
+            } catch (error) {
+                console.error(error);
+                liveBtn.disabled = false;
+                liveBtnText.textContent = 'Start Live Detection';
+                liveStatus.textContent = 'OFFLINE';
+                liveDetail.textContent =
+                    'Microphone permission is required for live detection.';
+            }
+        }
+
+        function stopLiveDetection() {
+            if (liveProcessor) {
+                liveProcessor.disconnect();
+                liveProcessor = null;
+            }
+
+            if (liveSource) {
+                liveSource.disconnect();
+                liveSource = null;
+            }
+
+            if (liveAudioContext) {
+                liveAudioContext.close();
+                liveAudioContext = null;
+            }
+
+            if (liveStream) {
+                liveStream.getTracks().forEach(track => track.stop());
+                liveStream = null;
+            }
+
+            if (liveSocket) {
+                if (liveSocket.readyState === WebSocket.OPEN ||
+                    liveSocket.readyState === WebSocket.CONNECTING) {
+                    liveSocket.close();
+                }
+                liveSocket = null;
+            }
+
+            liveBtn.disabled = false;
+            liveBtnText.textContent = 'Start Live Detection';
+            liveStatus.textContent = 'OFFLINE';
+            liveStatus.style.color = '';
+            liveDot.style.background = '';
+            liveDot.classList.remove('animate-pulse');
+        }
+
+        liveBtn.addEventListener('click', () => {
+            if (liveSocket &&
+                (liveSocket.readyState === WebSocket.OPEN ||
+                 liveSocket.readyState === WebSocket.CONNECTING)) {
+                stopLiveDetection();
+            } else {
+                startLiveDetection();
+            }
+        });
+
     </script>
 </body>
 </html>
