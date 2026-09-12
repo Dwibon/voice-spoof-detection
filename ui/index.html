@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VoiceShield — AI Voice Spoof Detection</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;450;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style>
+        /* === AMBIENT BACKGROUND === */
+        body {
+            background: #FAFAF8;
+            overflow-x: hidden;
+        }
+        .ambient-mesh {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            background:
+                radial-gradient(ellipse 80% 60% at 10% 20%, rgba(99, 102, 241, 0.06), transparent 60%),
+                radial-gradient(ellipse 60% 80% at 90% 80%, rgba(16, 185, 129, 0.05), transparent 60%),
+                radial-gradient(ellipse 50% 50% at 50% 50%, rgba(245, 158, 11, 0.03), transparent 60%);
+        }
+
+        /* === GLASSMORPHISM === */
+        .glass-card {
+            background: rgba(255, 255, 255, 0.60);
+            backdrop-filter: blur(24px) saturate(1.4);
+            -webkit-backdrop-filter: blur(24px) saturate(1.4);
+            border: 1px solid rgba(0, 0, 0, 0.06);
+            box-shadow:
+                0 1px 2px rgba(0, 0, 0, 0.04),
+                0 8px 32px rgba(0, 0, 0, 0.03);
+        }
+        .glass-pill {
+            background: rgba(255, 255, 255, 0.50);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 0.5px solid rgba(0, 0, 0, 0.08);
+        }
+
+        /* === RISK BANNERS === */
+        .risk-low {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(16, 185, 129, 0.02) 100%);
+            border-color: rgba(16, 185, 129, 0.2);
+        }
+        .risk-medium {
+            background: linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(245, 158, 11, 0.02) 100%);
+            border-color: rgba(245, 158, 11, 0.2);
+        }
+        .risk-high {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0%, rgba(239, 68, 68, 0.02) 100%);
+            border-color: rgba(239, 68, 68, 0.2);
+        }
+
+        /* === DROPZONE === */
+        .dropzone {
+            border: 1.5px dashed rgba(0, 0, 0, 0.12);
+            transition: all 0.25s cubic-bezier(0.23, 1, 0.32, 1);
+        }
+        .dropzone:hover, .dropzone.drag-over {
+            border-color: rgba(0, 0, 0, 0.3);
+            background: rgba(0, 0, 0, 0.015);
+        }
+        .dropzone.has-file {
+            border-color: rgba(16, 185, 129, 0.4);
+            background: rgba(16, 185, 129, 0.03);
+            border-style: solid;
+        }
+
+        /* === CTA BUTTON === */
+        .cta-btn {
+            background: #1a1a1a;
+            color: #fff;
+            box-shadow:
+                0 1px 2px rgba(0, 0, 0, 0.15),
+                0 0 0 1px rgba(0, 0, 0, 0.08),
+                inset 0 1px 0 rgba(255, 255, 255, 0.06);
+            transition: all 0.2s cubic-bezier(0.23, 1, 0.32, 1);
+        }
+        .cta-btn:hover {
+            background: #000;
+            box-shadow:
+                0 2px 8px rgba(0, 0, 0, 0.2),
+                0 0 0 1px rgba(0, 0, 0, 0.12),
+                inset 0 1px 0 rgba(255, 255, 255, 0.06);
+            transform: translateY(-0.5px);
+        }
+        .cta-btn:active { transform: translateY(0); }
+        .cta-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* === SPINNER === */
+        .spinner {
+            width: 18px; height: 18px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* === FADE IN === */
+        .fade-in {
+            animation: fadeIn 0.5s cubic-bezier(0.23, 1, 0.32, 1) forwards;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* === RISK GAUGE === */
+        .gauge-ring {
+            transition: stroke-dashoffset 1s cubic-bezier(0.23, 1, 0.32, 1);
+        }
+
+        /* === SUBTLE GRID === */
+        .bg-grid {
+            background-image:
+                linear-gradient(rgba(0,0,0,0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0,0,0,0.02) 1px, transparent 1px);
+            background-size: 40px 40px;
+        }
+
+        .hidden { display: none !important; }
+    </style>
+</head>
+
+<body class="min-h-screen font-sans text-[#1a1a1a] antialiased">
+    <div class="ambient-mesh"></div>
+    <div class="bg-grid fixed inset-0 z-0 pointer-events-none"></div>
+
+    <!-- ============================================ -->
+    <!-- HEADER                                       -->
+    <!-- ============================================ -->
+    <header class="fixed top-0 left-0 right-0 z-50 flex justify-center">
+        <div class="w-full max-w-[1200px] mx-auto px-6 py-4 flex items-center justify-between">
+            <a href="/" class="flex items-center gap-2.5 group">
+                <div class="w-8 h-8 rounded-lg bg-[#1a1a1a] flex items-center justify-center shadow-sm">
+                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                    </svg>
+                </div>
+                <span class="text-[15px] font-semibold tracking-[-0.01em]">VoiceShield</span>
+            </a>
+            <nav class="flex items-center gap-1">
+                <a href="/docs" class="glass-pill rounded-lg px-3.5 py-1.5 text-[13px] font-medium text-[#1a1a1a]/60 hover:text-[#1a1a1a] transition-colors">
+                    API Docs
+                </a>
+                <a href="/health" class="glass-pill rounded-lg px-3.5 py-1.5 text-[13px] font-medium text-[#1a1a1a]/60 hover:text-[#1a1a1a] transition-colors">
+                    Health
+                </a>
+                <a href="/mock-webhook/logs" class="glass-pill rounded-lg px-3.5 py-1.5 text-[13px] font-medium text-[#1a1a1a]/60 hover:text-[#1a1a1a] transition-colors">
+                    Webhook Logs
+                </a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- ============================================ -->
+    <!-- MAIN CONTENT                                 -->
+    <!-- ============================================ -->
+    <main class="relative z-10 max-w-[1200px] mx-auto px-6 pt-28 pb-16">
+
+        <!-- Hero -->
+        <div class="text-center mb-14">
+            <div class="inline-flex items-center gap-2 glass-pill rounded-full px-3.5 py-1.5 mb-5">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span class="text-[12px] font-medium tracking-wide text-[#1a1a1a]/50 uppercase">Real-Time Detection Engine</span>
+            </div>
+            <h1 class="text-[42px] sm:text-[52px] font-bold tracking-[-0.03em] leading-[1.08] mb-4">
+                <span class="text-[#1a1a1a]">AI Voice Spoof</span><br>
+                <span class="text-[#1a1a1a]/30">Detection</span>
+            </h1>
+            <p class="text-[16px] font-[450] leading-relaxed text-[#1a1a1a]/50 max-w-[480px] mx-auto tracking-[0.01em]">
+                Upload suspicious audio and get instant risk analysis powered by Wav2Vec2 deep embeddings and rolling window aggregation.
+            </p>
+        </div>
+
+        <!-- Two-column layout -->
+        <div class="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
+
+            <!-- ============================== -->
+            <!-- LEFT: Upload Panel (2 cols)    -->
+            <!-- ============================== -->
+            <div class="lg:col-span-2">
+                <div class="glass-card rounded-2xl p-6">
+                    <div class="flex items-center justify-between mb-6">
+                        <h2 class="text-[15px] font-semibold tracking-[-0.01em]">Analysis Input</h2>
+                        <span class="text-[11px] font-mono text-[#1a1a1a]/30 tracking-wide">O3 · O4 · O5</span>
+                    </div>
+
+                    <form id="uploadForm" class="space-y-5">
+                        <!-- Target Audio -->
+                        <div>
+                            <label class="block text-[12px] font-medium text-[#1a1a1a]/50 uppercase tracking-wider mb-2">Target Audio</label>
+                            <div class="dropzone rounded-xl p-5 text-center cursor-pointer" id="targetDropzone">
+                                <input id="targetAudio" type="file" accept="audio/*" class="sr-only" required>
+                                <div class="flex flex-col items-center gap-2">
+                                    <div class="w-10 h-10 rounded-xl bg-[#1a1a1a]/[0.03] flex items-center justify-center" id="targetIcon">
+                                        <svg class="w-5 h-5 text-[#1a1a1a]/25" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z"/>
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <p class="text-[13px] font-medium text-[#1a1a1a]/70" id="targetLabel">Drop audio or click to browse</p>
+                                        <p class="text-[11px] text-[#1a1a1a]/30 mt-0.5 font-mono" id="targetMeta">WAV · FLAC · MP3 up to 10MB</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Reference Audio -->
+                        <div>
+                            <label class="block text-[12px] font-medium text-[#1a1a1a]/50 uppercase tracking-wider mb-2">
+                                Reference Audio
+                                <span class="text-[#1a1a1a]/25 normal-case tracking-normal ml-1">optional</span>
+                            </label>
+                            <div class="dropzone rounded-xl p-4 text-center cursor-pointer" id="refDropzone">
+                                <input id="referenceAudio" type="file" accept="audio/*" class="sr-only">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-8 h-8 rounded-lg bg-[#1a1a1a]/[0.03] flex items-center justify-center shrink-0" id="refIcon">
+                                        <svg class="w-4 h-4 text-[#1a1a1a]/25" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0"/>
+                                        </svg>
+                                    </div>
+                                    <div class="text-left">
+                                        <p class="text-[12px] font-medium text-[#1a1a1a]/60" id="refLabel">Enrolled speaker reference</p>
+                                        <p class="text-[10px] text-[#1a1a1a]/25 font-mono" id="refMeta">For speaker consistency check</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Submit -->
+                        <button type="submit" id="submitBtn" class="cta-btn w-full h-[44px] rounded-xl text-[14px] font-[500] tracking-[0.01em] flex items-center justify-center gap-2">
+                            <span id="btnText">Analyze Audio</span>
+                            <div id="btnSpinner" class="spinner hidden"></div>
+                        </button>
+                    </form>
+
+                    <!-- Privacy Footer -->
+                    <div class="mt-5 pt-4 border-t border-black/[0.04] flex items-center gap-2">
+                        <svg class="w-3.5 h-3.5 text-emerald-600/60 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                        </svg>
+                        <p class="text-[11px] text-[#1a1a1a]/35 leading-relaxed">
+                            Privacy-by-design · Audio analyzed in memory, then securely deleted. No raw data is stored.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ============================== -->
+            <!-- RIGHT: Results Panel (3 cols)  -->
+            <!-- ============================== -->
+            <div class="lg:col-span-3" id="resultsWrapper">
+
+                <!-- Empty State -->
+                <div id="emptyState" class="glass-card rounded-2xl p-12 flex flex-col items-center justify-center text-center min-h-[420px]">
+                    <div class="w-16 h-16 rounded-2xl bg-[#1a1a1a]/[0.02] flex items-center justify-center mb-5">
+                        <svg class="w-7 h-7 text-[#1a1a1a]/15" fill="none" stroke="currentColor" stroke-width="1.2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-[15px] font-semibold text-[#1a1a1a]/60 mb-1.5">No analysis yet</h3>
+                    <p class="text-[13px] text-[#1a1a1a]/30 max-w-[260px] leading-relaxed">
+                        Upload an audio file to begin real-time voice spoof detection
+                    </p>
+                </div>
+
+                <!-- Results (hidden initially) -->
+                <div id="resultsSection" class="hidden fade-in space-y-4">
+
+                    <!-- Risk Banner -->
+                    <div id="riskBanner" class="glass-card rounded-2xl p-6 border">
+                        <div class="flex items-start justify-between mb-5">
+                            <div>
+                                <p class="text-[11px] font-medium text-[#1a1a1a]/40 uppercase tracking-wider mb-1">Risk Assessment</p>
+                                <h3 class="text-[32px] font-bold tracking-[-0.03em] leading-none" id="riskLevelText">LOW</h3>
+                            </div>
+                            <!-- Gauge -->
+                            <div class="relative w-[72px] h-[72px]">
+                                <svg class="w-full h-full -rotate-90" viewBox="0 0 72 72">
+                                    <circle cx="36" cy="36" r="30" fill="none" stroke="rgba(0,0,0,0.04)" stroke-width="5"/>
+                                    <circle id="gaugeRing" class="gauge-ring" cx="36" cy="36" r="30" fill="none" stroke="#10b981" stroke-width="5" stroke-linecap="round"
+                                        stroke-dasharray="188.5" stroke-dashoffset="188.5"/>
+                                </svg>
+                                <div class="absolute inset-0 flex items-center justify-center">
+                                    <span class="text-[14px] font-mono font-bold" id="gaugeText">0</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-3 gap-3">
+                            <div class="rounded-xl bg-[#1a1a1a]/[0.02] p-3">
+                                <p class="text-[10px] font-medium text-[#1a1a1a]/35 uppercase tracking-wider mb-1">Spoof Prob.</p>
+                                <p class="text-[20px] font-mono font-bold tracking-tight leading-none" id="spoofProbText">0%</p>
+                            </div>
+                            <div class="rounded-xl bg-[#1a1a1a]/[0.02] p-3">
+                                <p class="text-[10px] font-medium text-[#1a1a1a]/35 uppercase tracking-wider mb-1">Confidence</p>
+                                <p class="text-[20px] font-mono font-bold tracking-tight leading-none" id="confidenceText">0%</p>
+                            </div>
+                            <div class="rounded-xl bg-[#1a1a1a]/[0.02] p-3">
+                                <p class="text-[10px] font-medium text-[#1a1a1a]/35 uppercase tracking-wider mb-1">Windows</p>
+                                <p class="text-[20px] font-mono font-bold tracking-tight leading-none" id="windowsText">0</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Speaker Consistency (conditional) -->
+                    <div id="speakerCard" class="hidden glass-card rounded-2xl p-5 border fade-in">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-[11px] font-medium text-[#1a1a1a]/40 uppercase tracking-wider mb-1">Speaker Consistency</p>
+                                <p class="text-[18px] font-bold tracking-[-0.01em]" id="speakerMatchText">MATCH</p>
+                            </div>
+                            <div class="text-right">
+                                <p class="text-[10px] font-medium text-[#1a1a1a]/35 uppercase tracking-wider mb-1">Similarity</p>
+                                <p class="text-[18px] font-mono font-bold tracking-tight" id="speakerSimText">0.00</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Explanation -->
+                    <div class="glass-card rounded-2xl p-5">
+                        <p class="text-[11px] font-medium text-[#1a1a1a]/40 uppercase tracking-wider mb-3">Explanation</p>
+                        <p class="text-[13px] leading-relaxed text-[#1a1a1a]/70 mb-3" id="explanationSummary"></p>
+                        <div class="space-y-1.5" id="explanationEvidence"></div>
+                    </div>
+
+                    <!-- Recommendation -->
+                    <div id="recBanner" class="rounded-2xl p-5 border">
+                        <div class="flex items-center gap-3">
+                            <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" id="recIconBg">
+                                <svg id="recIcon" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <p class="text-[13px] font-semibold" id="actionText">PROCEED</p>
+                                <p class="text-[12px] text-[#1a1a1a]/50 leading-relaxed" id="recommendationMessage"></p>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="mt-20 text-center">
+            <div class="inline-flex items-center gap-4 text-[11px] font-mono text-[#1a1a1a]/20">
+                <span>Wav2Vec2 · 768-D</span>
+                <span class="w-px h-3 bg-[#1a1a1a]/10"></span>
+                <span>ASVspoof2019 LA</span>
+                <span class="w-px h-3 bg-[#1a1a1a]/10"></span>
+                <span>95.46% Accuracy</span>
+                <span class="w-px h-3 bg-[#1a1a1a]/10"></span>
+                <span>4.74% EER</span>
+            </div>
+        </footer>
+    </main>
+
+    <!-- ============================================ -->
+    <!-- JAVASCRIPT                                   -->
+    <!-- ============================================ -->
+    <script>
+        // ---- Elements ----
+        const targetInput = document.getElementById('targetAudio');
+        const refInput = document.getElementById('referenceAudio');
+        const targetDropzone = document.getElementById('targetDropzone');
+        const refDropzone = document.getElementById('refDropzone');
+        const form = document.getElementById('uploadForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const btnText = document.getElementById('btnText');
+        const btnSpinner = document.getElementById('btnSpinner');
+
+        // ---- Dropzone wiring ----
+        function wireDropzone(dropzone, input, labelId, metaId, iconId) {
+            dropzone.addEventListener('click', () => input.click());
+            dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+            dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+            dropzone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropzone.classList.remove('drag-over');
+                if (e.dataTransfer.files.length) {
+                    input.files = e.dataTransfer.files;
+                    onFileSelected(input, dropzone, labelId, metaId, iconId);
+                }
+            });
+            input.addEventListener('change', () => onFileSelected(input, dropzone, labelId, metaId, iconId));
+        }
+
+        function onFileSelected(input, dropzone, labelId, metaId, iconId) {
+            if (!input.files.length) return;
+            const file = input.files[0];
+            document.getElementById(labelId).textContent = file.name;
+            document.getElementById(metaId).textContent = formatBytes(file.size);
+            dropzone.classList.add('has-file');
+            // Swap icon to checkmark
+            document.getElementById(iconId).innerHTML = `
+                <svg class="w-5 h-5 text-emerald-600/70" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/>
+                </svg>`;
+        }
+
+        function formatBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1048576).toFixed(1) + ' MB';
+        }
+
+        wireDropzone(targetDropzone, targetInput, 'targetLabel', 'targetMeta', 'targetIcon');
+        wireDropzone(refDropzone, refInput, 'refLabel', 'refMeta', 'refIcon');
+
+        // ---- Form submit ----
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!targetInput.files.length) return;
+
+            // Loading state
+            submitBtn.disabled = true;
+            btnText.textContent = 'Analyzing…';
+            btnSpinner.classList.remove('hidden');
+
+            const formData = new FormData();
+            formData.append('audio', targetInput.files[0]);
+            const hasRef = refInput.files.length > 0;
+            if (hasRef) formData.append('reference', refInput.files[0]);
+
+            const endpoint = hasRef ? '/detect-with-reference' : '/detect';
+
+            try {
+                const response = await fetch(endpoint, { method: 'POST', body: formData });
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || 'Analysis failed');
+                }
+                const result = await response.json();
+                renderResults(result);
+            } catch (err) {
+                alert('Error: ' + err.message);
+            } finally {
+                submitBtn.disabled = false;
+                btnText.textContent = 'Analyze Audio';
+                btnSpinner.classList.add('hidden');
+            }
+        });
+
+        // ---- Render Results ----
+        function renderResults(res) {
+            document.getElementById('emptyState').classList.add('hidden');
+            const section = document.getElementById('resultsSection');
+            section.classList.remove('hidden');
+
+            // Risk banner
+            const banner = document.getElementById('riskBanner');
+            banner.classList.remove('risk-low', 'risk-medium', 'risk-high');
+
+            let riskClass = 'risk-low';
+            let gaugeColor = '#10b981';
+            let riskTextColor = '#047857';
+
+            if (res.risk_level === 'MEDIUM') {
+                riskClass = 'risk-medium';
+                gaugeColor = '#f59e0b';
+                riskTextColor = '#b45309';
+            } else if (res.risk_level === 'HIGH') {
+                riskClass = 'risk-high';
+                gaugeColor = '#ef4444';
+                riskTextColor = '#dc2626';
+            }
+
+            banner.classList.add(riskClass);
+            document.getElementById('riskLevelText').textContent = res.risk_level;
+            document.getElementById('riskLevelText').style.color = riskTextColor;
+
+            // Gauge
+            const gaugeRing = document.getElementById('gaugeRing');
+            const score = res.risk_score || 0;
+            const circumference = 188.5;
+            const offset = circumference - (score / 100) * circumference;
+            gaugeRing.style.stroke = gaugeColor;
+            gaugeRing.style.strokeDashoffset = offset;
+            document.getElementById('gaugeText').textContent = Math.round(score);
+            document.getElementById('gaugeText').style.color = riskTextColor;
+
+            // Stats
+            document.getElementById('spoofProbText').textContent = res.spoof_percentage + '%';
+            document.getElementById('confidenceText').textContent = res.confidence + '%';
+            document.getElementById('windowsText').textContent = res.windows_analyzed || 0;
+
+            // Speaker consistency
+            const speakerCard = document.getElementById('speakerCard');
+            if (res.speaker_consistency) {
+                speakerCard.classList.remove('hidden');
+                document.getElementById('speakerMatchText').textContent = res.speaker_consistency;
+                document.getElementById('speakerSimText').textContent = parseFloat(res.speaker_similarity).toFixed(4);
+
+                if (res.speaker_consistency === 'MATCH') {
+                    speakerCard.classList.add('risk-low');
+                    speakerCard.classList.remove('risk-high');
+                    document.getElementById('speakerMatchText').style.color = '#047857';
+                } else {
+                    speakerCard.classList.add('risk-high');
+                    speakerCard.classList.remove('risk-low');
+                    document.getElementById('speakerMatchText').style.color = '#dc2626';
+                }
+            } else {
+                speakerCard.classList.add('hidden');
+            }
+
+            // Explanation
+            document.getElementById('explanationSummary').textContent = res.explanation.summary;
+            const evContainer = document.getElementById('explanationEvidence');
+            evContainer.innerHTML = '';
+            res.explanation.evidence.forEach(ev => {
+                const div = document.createElement('div');
+                div.className = 'flex items-start gap-2';
+                div.innerHTML = `
+                    <span class="w-1 h-1 rounded-full bg-[#1a1a1a]/20 mt-[7px] shrink-0"></span>
+                    <span class="text-[12px] text-[#1a1a1a]/50 leading-relaxed">${ev}</span>`;
+                evContainer.appendChild(div);
+            });
+
+            // Recommendation
+            const recBanner = document.getElementById('recBanner');
+            recBanner.classList.remove('risk-low', 'risk-medium', 'risk-high');
+            recBanner.classList.add(riskClass);
+
+            const recIconBg = document.getElementById('recIconBg');
+            recIconBg.style.background = gaugeColor + '15';
+            document.getElementById('recIcon').style.color = gaugeColor;
+
+            document.getElementById('actionText').textContent = res.recommendation.action;
+            document.getElementById('actionText').style.color = riskTextColor;
+            document.getElementById('recommendationMessage').textContent = res.recommendation.message;
+        }
+    </script>
+</body>
+</html>
